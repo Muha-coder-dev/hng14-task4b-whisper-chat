@@ -1,36 +1,47 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# WhisperBox 
 
-## Getting Started
+A secure, End-to-End Encrypted (E2EE) messaging application built with Next.js, TypeScript, and the native Web Crypto API. This project was developed as part of the HNG Stage 4 (Task 4B) requirements to demonstrate advanced client-side cryptography.
 
-First, run the development server:
+## Features
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+* **True End-to-End Encryption:** Messages are encrypted in the browser before being sent to the server. The backend never sees plaintext messages or private keys.
+* **Hybrid Encryption System:** Utilizes **AES-GCM** for fast message encryption and **RSA-OAEP** for secure key exchange.
+* **Secure Key Storage:** Private keys are wrapped (encrypted) using **AES-KW** derived from a user's master password via **PBKDF2**, ensuring keys can be safely stored on the backend and retrieved across devices.
+* **"Double Lock" Payload:** Senders encrypt the message key with both the recipient's public key and their own, allowing both parties to read the chat history.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+##  Tech Stack
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+* **Frontend:** Next.js (React), Tailwind CSS, TypeScript
+* **Cryptography:** Native browser Web Crypto API (`window.crypto.subtle`)
+* **Backend:** Koyeb API (`whisperbox.koyeb.app`) via REST
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+##  How the Cryptography Works (The "Typical Flow")
 
-## Learn More
+### 1. Registration & Key Generation
+When a new user registers, the client:
+1. Generates a fresh **RSA-OAEP (2048-bit)** key pair.
+2. Derives a strong wrapping key from the user's password and a random salt using **PBKDF2**.
+3. Wraps the RSA Private Key using **AES-KW**.
+4. Sends the Public Key, Wrapped Private Key, and Salt to the server. The raw Private Key *never* leaves the browser.
 
-To learn more about Next.js, take a look at the following resources:
+### 2. Authentication & Key Unwrapping
+When logging in, the client:
+1. Receives the Wrapped Private Key and Salt from the server's Auth payload.
+2. Re-derives the AES-KW wrapping key using the inputted password.
+3. Unwraps the RSA Private Key into memory for the active session.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 3. Sending an Encrypted Message
+To send a message, the client:
+1. Generates a random, single-use **AES-GCM** key.
+2. Encrypts the plaintext message with this AES key.
+3. Retrieves the recipient's RSA Public Key from the server.
+4. Encrypts the single-use AES key twice (The "Double Lock"):
+   - Once with the **Recipient's Public Key** (so they can read it).
+   - Once with the **Sender's Public Key** (so the sender can read their own sent messages).
+5. Sends the AES ciphertext, IV, and both encrypted keys to the server as an opaque blob.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Local Setup
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Clone the repository:
+   ```bash
+   git clone <https://github.com/Muha-coder-dev/hng14-task4b-whisper-chat>
