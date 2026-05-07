@@ -1,154 +1,187 @@
 "use client";
-import { useState } from "react";
-// Make sure you have created these files from our previous steps!
-import { register, login, searchUser, getPublicKey, sendMessageFallback } from "../lib/api";
-import { generateRSAKeyPair, deriveWrappingKey, wrapPrivateKey, createEncryptedPayload } from "../lib/crypto";
 
-export default function WhisperChat() {
-  const [view, setView] = useState<"auth" | "chat">("auth");
+import { useState } from "react";
+// Ensure this path matches exactly where your crypto.ts is located!
+import { generateRSAKeyPair, deriveWrappingKey, wrapPrivateKey, unwrapPrivateKey } from "../lib/crypto";
+
+export default function Home() {
+  const [isLogin, setIsLogin] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  
-  // Chat State
-  const [token, setToken] = useState("");
-  const [myPublicKey, setMyPublicKey] = useState("");
-  const [recipient, setRecipient] = useState("");
-  const [message, setMessage] = useState("");
-  const [chatLog, setChatLog] = useState<{ sender: string; text: string }[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [chatReady, setChatReady] = useState(false);
 
-  // --- 1. AUTHENTICATION (Register & Wrap Keys) ---
-  const handleAuth = async () => {
-    if (!username || !password) return alert("Enter username and password!");
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
 
     try {
-      // 1. Generate new RSA keys for the user
-      const rsaKeys = await generateRSAKeyPair();
-      
-      // Export public key to send to server
-      const exportedPubKey = await crypto.subtle.exportKey("spki", rsaKeys.publicKey);
-      const pubKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(exportedPubKey)));
+      if (isLogin) {
+        // --- LOG IN FLOW ---
+        const response = await fetch("https://whisperbox.koyeb.app/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password })
+        });
 
-      // 2. Generate a random salt & derive AES wrapping key from the password
-      const salt = crypto.getRandomValues(new Uint8Array(16));
-      const saltBase64 = btoa(String.fromCharCode(...salt));
-      const wrappingKey = await deriveWrappingKey(password, salt);
-
-      // 3. Wrap the private key so the server can't read it
-      const wrappedPrivateKey = await wrapPrivateKey(rsaKeys.privateKey, wrappingKey);
-
-      // 4. Register with Koyeb API
-      const authData = {
-        username: username,
-        display_name: username,
-        password: password, // Server hashes this
-        public_key: pubKeyBase64,
-        wrapped_private_key: wrappedPrivateKey,
-        pbkdf2_salt: saltBase64,
-      };
-
-      const response = await register(authData);
-      
-      // Auto-login after registration to get the JWT token
-      const loginRes = await login({ username, password });
-      setToken(loginRes.access_token);
-      setMyPublicKey(pubKeyBase64);
-      setView("chat");
-
-    } catch (error) {
-      console.error(error);
-      alert("Auth failed. Try a different username!");
-    }
-  };
-
-  // --- 2. ENCRYPT & SEND MESSAGE ---
-  const handleSend = async () => {
-    if (!recipient || !message) return alert("Enter recipient username and message!");
-
-    try {
-      // 1. Find the user
-      const users = await searchUser(token, recipient);
-      if (!users.length) return alert("User not found!");
-      const recipientId = users[0].id;
-
-      // 2. Fetch their Public Key
-      const { public_key: recipientPubKeyBase64 } = await getPublicKey(token, recipientId);
-
-      // 3. Create the "Double Locked" payload (Hybrid Encryption)
-      const payload = await createEncryptedPayload(message, recipientPubKeyBase64, myPublicKey);
-      console.log("Secure Payload going to server:", payload);
-
-      // 4. Send to server fallback
-      await sendMessageFallback(token, {
-        conversation_id: recipientId, // Simplified for this demo
-        ...payload
-      });
-
-      setChatLog([...chatLog, { sender: "You", text: message }]);
-      setMessage("");
-    } catch (error) {
-      console.error(error);
-      alert("Failed to send message securely.");
-    }
-  };
-
-  return (
-    <main className="min-h-screen bg-slate-900 text-white p-8 flex flex-col items-center">
-      <h1 className="text-3xl font-bold mb-8 text-yellow-400">WhisperBox</h1>
-      
-      <div className="w-full max-w-md bg-slate-800 p-6 rounded-lg shadow-xl border border-slate-700">
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.detail || "Invalid username or password");
+        }
         
-        {view === "auth" ? (
-          // --- AUTH UI ---
-          <div className="flex flex-col gap-4">
-            <h2 className="text-xl mb-2">Create Secure Identity</h2>
-            <input 
-              type="text" placeholder="Username" 
-              className="p-2 rounded bg-slate-900 border border-slate-600 outline-none focus:border-yellow-400"
-              value={username} onChange={(e) => setUsername(e.target.value)}
-            />
-            <input 
-              type="password" placeholder="Master Password" 
-              className="p-2 rounded bg-slate-900 border border-slate-600 outline-none focus:border-yellow-400"
-              value={password} onChange={(e) => setPassword(e.target.value)}
-            />
-            <button onClick={handleAuth} className="bg-yellow-400 text-slate-900 px-4 py-2 rounded font-bold hover:bg-yellow-500 mt-2">
-              Generate Keys & Enter
-            </button>
-          </div>
-        ) : (
-          // --- CHAT UI ---
-          <div className="flex flex-col gap-4">
-            <div className="flex justify-between items-center mb-2">
-              <h2 className="text-xl">Encrypted Comms</h2>
-              <span className="text-xs text-green-400">🟢 Connected</span>
-            </div>
-            
-            <input 
-              type="text" placeholder="Recipient's Exact Username..." 
-              className="p-2 rounded bg-slate-900 border border-slate-600 outline-none text-yellow-400"
-              value={recipient} onChange={(e) => setRecipient(e.target.value)}
-            />
-            
-            <div className="h-64 overflow-y-auto p-4 bg-slate-900 rounded border border-slate-700">
-              {chatLog.map((msg, i) => (
-                <p key={i} className="mb-2"><span className="text-yellow-400 font-bold">{msg.sender}:</span> {msg.text}</p>
-              ))}
-            </div>
+        const data = await response.json();
+        const salt = Uint8Array.from(atob(data.user.pbkdf2_salt), c => c.charCodeAt(0));
+        const wrappingKey = await deriveWrappingKey(password, salt);
+        await unwrapPrivateKey(data.user.wrapped_private_key, wrappingKey);
+        
+        setChatReady(true);
 
-            <div className="flex gap-2">
-              <input 
-                type="text" placeholder="Type a secure message..." 
-                className="flex-1 p-2 rounded bg-slate-900 border border-slate-600 outline-none"
-                value={message} onChange={(e) => setMessage(e.target.value)}
-              />
-              <button onClick={handleSend} className="bg-yellow-400 text-slate-900 px-4 py-2 rounded font-bold hover:bg-yellow-500">
-                Send
-              </button>
-            </div>
-          </div>
-        )}
+      } else {
+        // --- REGISTER FLOW ---
+        const keys = await generateRSAKeyPair();
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const saltBase64 = btoa(String.fromCharCode(...salt));
 
+        const wrappingKey = await deriveWrappingKey(password, salt);
+        const wrappedPrivateKey = await wrapPrivateKey(keys.privateKey, wrappingKey);
+        
+        const exportedPubKey = await crypto.subtle.exportKey("spki", keys.publicKey);
+        const publicKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(exportedPubKey)));
+
+        const response = await fetch("https://whisperbox.koyeb.app/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: username,
+            display_name: username, // <--- THE CRITICAL FIX IS HERE
+            password: password,
+            public_key: publicKeyBase64,
+            wrapped_private_key: wrappedPrivateKey,
+            pbkdf2_salt: saltBase64
+          })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          let errorMessage = "Registration failed. Check inputs (No special characters in username).";
+          if (typeof errData.detail === 'string') errorMessage = errData.detail;
+          else if (Array.isArray(errData.detail)) errorMessage = errData.detail[0]?.msg || errorMessage;
+          throw new Error(errorMessage);
+        }
+        
+        setChatReady(true);
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --- SUCCESS CHAT UI ---
+  if (chatReady) {
+    return (
+      <div className="min-h-screen bg-[#11161B] text-white flex flex-col items-center justify-center p-4 font-sans">
+        <div className="bg-[#1A2228] p-6 rounded-2xl w-full max-w-md shadow-2xl">
+           <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
+              <h2 className="text-xl font-semibold text-white">WhisperBox Chats</h2>
+              <span className="text-[#00C48C] text-sm flex items-center gap-2 font-medium">
+                <span className="w-2.5 h-2.5 bg-[#00C48C] rounded-full animate-pulse"></span> Connected
+              </span>
+           </div>
+           <p className="text-gray-400 text-center py-10">Encrypted messaging ready.</p>
+        </div>
       </div>
-    </main>
+    );
+  }
+
+  // --- NEW MODERN LOGIN/REGISTER UI ---
+  return (
+    <div className="min-h-screen bg-[#11161B] flex flex-col items-center justify-center p-6 font-sans">
+      
+      {/* Logo Area */}
+      <div className="mb-6 flex flex-col items-center">
+        <div className="w-16 h-16 bg-[#00C48C] rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-emerald-900/50">
+          {/* Simple SVG Chat Bubble matching the Yapp logo vibe */}
+          <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
+          </svg>
+        </div>
+        <h1 className="text-2xl font-bold text-white mb-2">
+          {isLogin ? "Welcome back" : "Create account"}
+        </h1>
+        <p className="text-gray-400 text-sm">
+          WhisperBox • Secure End-to-End Encryption
+        </p>
+      </div>
+
+      {/* Form Container */}
+      <div className="w-full max-w-sm">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          
+          {/* Username Input - Styled light like the screenshot */}
+          <div>
+            <input
+              type="text"
+              placeholder="Username (e.g., john_doe)"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full bg-[#E8F0FE] text-black placeholder-gray-500 rounded-xl p-4 focus:outline-none focus:ring-2 focus:ring-[#00C48C] transition-all"
+              required
+              minLength={3}
+              maxLength={32}
+            />
+          </div>
+
+          {/* Password Input - Styled dark like the screenshot */}
+          <div>
+            <input
+              type="password"
+              placeholder="Password (min 8 characters)"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full bg-[#242E35] text-white placeholder-gray-500 rounded-xl p-4 focus:outline-none focus:ring-2 focus:ring-[#00C48C] transition-all"
+              required
+              minLength={8}
+            />
+          </div>
+          
+          {/* Error Message */}
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/50 text-red-400 text-sm p-3 rounded-lg text-center">
+              {error}
+            </div>
+          )}
+          
+          {/* Action Button */}
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-[#00C48C] hover:bg-[#00A877] text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-emerald-900/30 disabled:opacity-50 mt-2"
+          >
+            {loading ? "Processing..." : (isLogin ? "Sign In Securely" : "Create Account")}
+          </button>
+        </form>
+
+        {/* The Toggle Link at the bottom exactly like the mockup */}
+        <div className="mt-8 text-center text-sm text-gray-400">
+          {isLogin ? "Don't have an account? " : "Already have an account? "}
+          <button 
+            type="button"
+            onClick={() => { setIsLogin(!isLogin); setError(""); }}
+            className="text-[#00C48C] hover:text-white font-medium transition-colors"
+          >
+            {isLogin ? "Create account" : "Sign in"}
+          </button>
+        </div>
+        
+        <div className="mt-8 text-center flex items-center justify-center gap-2 text-xs text-gray-600">
+          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
+          Secured with end-to-end encryption
+        </div>
+      </div>
+    </div>
   );
 }
