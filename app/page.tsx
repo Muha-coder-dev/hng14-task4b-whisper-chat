@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { generateRSAKeyPair, deriveWrappingKey, wrapPrivateKey, unwrapPrivateKey, createEncryptedPayload } from "../lib/crypto";
+import { generateRSAKeyPair, deriveWrappingKey, wrapPrivateKey, unwrapPrivateKey, createEncryptedPayload, decryptPayload } from "../lib/crypto";
 
 export default function Home() {
   // Auth States
@@ -18,6 +18,7 @@ export default function Home() {
   // Security States
   const [accessToken, setAccessToken] = useState("");
   const [publicKeyStr, setPublicKeyStr] = useState("");
+  const [privateKey, setPrivateKey] = useState<CryptoKey | null>(null);
 
   // Chat & Search States
   const [searchQuery, setSearchQuery] = useState("");
@@ -41,6 +42,7 @@ export default function Home() {
     try {
       let currentToken = "";
       let currentPubKey = "";
+      let currentPrivKey: CryptoKey | null = null;
 
       if (isLogin) {
         const response = await fetch("/api/proxy/auth/login", {
@@ -51,6 +53,10 @@ export default function Home() {
 
         if (!response.ok) throw new Error("Invalid username or password");
         const data = await response.json();
+        
+        const salt = Uint8Array.from(atob(data.user.pbkdf2_salt), c => c.charCodeAt(0));
+        const wrappingKey = await deriveWrappingKey(password, salt);
+        currentPrivKey = await unwrapPrivateKey(data.user.wrapped_private_key, wrappingKey);
         
         currentToken = data.access_token;
         currentPubKey = data.user.public_key;
@@ -75,10 +81,12 @@ export default function Home() {
         if (!response.ok) throw new Error("Registration failed.");
         const data = await response.json();
         
+        currentPrivKey = keys.privateKey;
         currentToken = data.access_token;
         currentPubKey = data.user.public_key;
       }
 
+      setPrivateKey(currentPrivKey);
       setAccessToken(currentToken);
       setPublicKeyStr(currentPubKey);
       setChatReady(true);
@@ -110,15 +118,34 @@ export default function Home() {
 
   const startChat = async (user: any) => {
     try {
-      // Fetch their public key so we can encrypt messages for them
-      const res = await fetch(`/api/proxy/users/${user.id}/public-key`, {
+      // 1. Get their public key
+      const keyRes = await fetch(`/api/proxy/users/${user.id}/public-key`, {
         headers: { "Authorization": `Bearer ${accessToken}` }
       });
-      const data = await res.json();
-      setActiveChat({ id: user.id, username: user.username, publicKey: data.public_key });
-      setMessages([]); // Clear previous messages
+      const keyData = await keyRes.json();
+      setActiveChat({ id: user.id, username: user.username, publicKey: keyData.public_key });
+
+      // 2. Fetch Received Messages from Database
+      const msgRes = await fetch(`/api/proxy/conversations/${user.id}/messages`, {
+        headers: { "Authorization": `Bearer ${accessToken}` }
+      });
+      const msgData = await msgRes.json();
+
+      // 3. Decrypt and display them!
+      if (Array.isArray(msgData) && privateKey) {
+         const decryptedMsgs = await Promise.all(msgData.map(async (msg: any) => {
+            try {
+               const text = await decryptPayload(msg.payload, privateKey);
+               return { id: msg.id, text: text, ciphertextPreview: "Fetched from DB" };
+            } catch { return null; }
+         }));
+         // Reverse so newest is at the bottom
+         setMessages(decryptedMsgs.filter(Boolean).reverse() as any);
+      } else {
+         setMessages([]);
+      }
     } catch (err) {
-      console.error("Failed to fetch public key", err);
+      console.error("Failed to load chat", err);
     }
   };
 
@@ -130,12 +157,9 @@ export default function Home() {
     setMessageInput(""); 
 
     try {
-      // 1. Encrypt Payload using recipient's public key AND our public key
       const payload = await createEncryptedPayload(textToSend, activeChat.publicKey, publicKeyStr);
-      
       console.log("🔒 SENDING SECURE PAYLOAD TO KOYEB:", payload);
 
-      // 2. Send to Koyeb Backend (Offline Fallback / Storage)
       await fetch("/api/proxy/messages", {
         method: "POST",
         headers: { 
@@ -148,7 +172,6 @@ export default function Home() {
         })
       });
 
-      // 3. Display locally to prove it worked
       setMessages(prev => [...prev, {
         id: Date.now(),
         text: textToSend,
@@ -234,7 +257,7 @@ export default function Home() {
                          </div>
                          <div className="flex items-center gap-1 mt-1.5 opacity-60">
                            <svg className="w-3 h-3 text-[#00C48C]" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd"></path></svg>
-                           <span className="text-[10px] text-slate-400 font-mono tracking-wider">AES-GCM Sent • {msg.ciphertextPreview}</span>
+                           <span className="text-[10px] text-slate-400 font-mono tracking-wider">AES-GCM • {msg.ciphertextPreview}</span>
                          </div>
                       </div>
                     ))
@@ -266,7 +289,6 @@ export default function Home() {
   }
 
   // --- NEW MODERN LOGIN/REGISTER UI ---
-  // (Unchanged from your previous flawless login UI)
   return (
     <div className="min-h-screen bg-[#11161B] flex flex-col items-center justify-center p-6 font-sans">
       <div className="mb-6 flex flex-col items-center">
