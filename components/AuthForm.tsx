@@ -72,6 +72,9 @@ export default function AuthForm({ onAuthenticated }: Props) {
         const salt = Uint8Array.from(atob(data.user.pbkdf2_salt), c => c.charCodeAt(0));
         const wrappingKey = await deriveWrappingKey(password, salt);
         const privateKey = await unwrapPrivateKey(data.user.wrapped_private_key, wrappingKey);
+        // Export key so page reload can restore session without re-login
+        const jwk = await crypto.subtle.exportKey('jwk', privateKey);
+        sessionStorage.setItem('wb_privkey_jwk', JSON.stringify(jwk));
 
         session = {
           accessToken: data.access_token,
@@ -98,6 +101,10 @@ export default function AuthForm({ onAuthenticated }: Props) {
           wrapped_private_key: wrappedPrivateKey,
           pbkdf2_salt: saltBase64,
         });
+
+        // Export key for session restoration on reload
+        const jwk = await crypto.subtle.exportKey('jwk', keys.privateKey);
+        sessionStorage.setItem('wb_privkey_jwk', JSON.stringify(jwk));
 
         session = {
           accessToken: data.access_token,

@@ -61,13 +61,15 @@ interface Props {
   session: SessionState;
   recentChats: RecentChat[];
   activeChat: ActiveChat | null;
+  theme: 'dark' | 'light';
   onStartChat: (chat: ActiveChat) => void;
   onLogout: () => void;
+  onToggleTheme: () => void;
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
-export default function Sidebar({ session, recentChats, activeChat, onStartChat, onLogout }: Props) {
+export default function Sidebar({ session, recentChats, activeChat, theme, onStartChat, onLogout, onToggleTheme }: Props) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<UserSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -79,7 +81,10 @@ export default function Sidebar({ session, recentChats, activeChat, onStartChat,
     const t = setTimeout(async () => {
       setIsSearching(true);
       try {
-        const data = await searchUsers(session.accessToken, query.trim());
+        const cleanQuery = query.trim().startsWith('@') && query.trim().length > 1
+          ? query.trim().substring(1)
+          : query.trim();
+        const data = await searchUsers(session.accessToken, cleanQuery);
         setResults(data.filter(u => u.id !== session.userId));
       } catch { setResults([]); }
       finally { setIsSearching(false); }
@@ -101,7 +106,9 @@ export default function Sidebar({ session, recentChats, activeChat, onStartChat,
   const showSearch = query.trim().length > 0;
 
   return (
-    <aside className="w-[280px] flex flex-col bg-[#161B22] border-r border-[#30363D] flex-shrink-0 h-full">
+    <aside className="w-[280px] flex flex-col border-r flex-shrink-0 h-full transition-colors duration-200"
+      style={{ backgroundColor: 'var(--wb-surface)', borderColor: 'var(--wb-border)' }}
+    >
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-[#30363D] flex-shrink-0">
@@ -258,11 +265,27 @@ export default function Sidebar({ session, recentChats, activeChat, onStartChat,
             Online
           </p>
         </div>
+        {/* Theme toggle button */}
+        <button
+          onClick={onToggleTheme}
+          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          className="text-[#7D8590] hover:text-white p-1.5 rounded-lg hover:bg-[#21262D] transition-all flex-shrink-0"
+        >
+          {theme === 'dark' ? (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+          ) : (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+            </svg>
+          )}
+        </button>
         <button
           id="logout-button"
           onClick={onLogout}
           title="Sign out"
-          className="text-[#7D8590] hover:text-red-400 p-1.5 rounded-lg hover:bg-red-400/10 transition-all"
+          className="text-[#7D8590] hover:text-red-400 p-1.5 rounded-lg hover:bg-red-400/10 transition-all flex-shrink-0"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
             <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
