@@ -1,34 +1,60 @@
-import { NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
 
-async function handleRequest(req: Request, method: string) {
+const KOYEB_BASE = process.env.KOYEB_API_URL ?? 'https://whisperbox.koyeb.app';
+
+/**
+ * Koyeb free tier goes to sleep after inactivity — cold starts take 20–40s.
+ * We use a 45s timeout to survive the wakeup, otherwise Node drops it silently.
+ */
+const UPSTREAM_TIMEOUT_MS = 45_000;
+
+type Context = { params: Promise<{ path: string[] }> };
+
+async function handleRequest(req: NextRequest, ctx: Context, method: string) {
   try {
-    const url = new URL(req.url);
-    // This safely captures the path AND the search query (e.g. ?q=username)
-    const endpoint = url.pathname.replace('/api/proxy/', '') + url.search;
-    
-    const options: RequestInit = {
-      method: method,
-      headers: {
-        'Content-Type': 'application/json',
-        // Pass the auth token from the frontend to Koyeb
-        'Authorization': req.headers.get('Authorization') || ''
-      }
+    // Use params.path (the correct, robust way) and append the original query string
+    const { path } = await ctx.params;
+    const endpoint = path.join('/') + req.nextUrl.search;
+
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+      'Authorization': req.headers.get('Authorization') ?? '',
     };
 
-    if (method !== 'GET') {
-      options.body = JSON.stringify(await req.json());
+    const options: RequestInit = { method, headers };
+
+    if (method !== 'GET' && method !== 'HEAD') {
+      // Safely parse body — some requests may arrive with no body
+      const text = await req.text();
+      if (text) options.body = text;
     }
 
-    const response = await fetch(`https://whisperbox.koyeb.app/${endpoint}`, options);
-    const data = await response.json().catch(() => ({}));
-    return NextResponse.json(data, { status: response.status });
-    
-  } catch (error: any) {
-    console.error("PROXY ERROR:", error);
-    return NextResponse.json({ detail: error.message }, { status: 500 });
+    // Abort if Koyeb takes longer than the timeout (cold start protection)
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+    options.signal = controller.signal;
+
+    let upstream: Response;
+    try {
+      upstream = await fetch(`${KOYEB_BASE}/${endpoint}`, options);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    // Preserve the upstream status code exactly
+    const data = await upstream.json().catch(() => ({}));
+    return NextResponse.json(data, { status: upstream.status });
+
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown proxy error';
+    console.error(`[PROXY ${method}] Error:`, message);
+    return NextResponse.json({ detail: message }, { status: 500 });
   }
 }
 
-// Export both GET and POST to handle all API needs!
-export async function GET(req: Request) { return handleRequest(req, 'GET'); }
-export async function POST(req: Request) { return handleRequest(req, 'POST'); }
+// All HTTP methods the Koyeb API may require
+export async function GET(req: NextRequest, ctx: Context) { return handleRequest(req, ctx, 'GET'); }
+export async function POST(req: NextRequest, ctx: Context) { return handleRequest(req, ctx, 'POST'); }
+export async function PUT(req: NextRequest, ctx: Context) { return handleRequest(req, ctx, 'PUT'); }
+export async function PATCH(req: NextRequest, ctx: Context) { return handleRequest(req, ctx, 'PATCH'); }
+export async function DELETE(req: NextRequest, ctx: Context) { return handleRequest(req, ctx, 'DELETE'); }

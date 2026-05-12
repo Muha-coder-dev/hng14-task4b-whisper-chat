@@ -1,8 +1,13 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0D1117;
+  --foreground: #E6EDF3;
+  --wb-surface: #161B22;
+  --wb-surface-2: #21262D;
+  --wb-border: #30363D;
+  --wb-accent: #00C48C;
+  --wb-muted: #7D8590;
 }
 
 @theme inline {
@@ -12,15 +17,52 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html, body {
+  height: 100%;
+  overflow: hidden;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* ── Custom scrollbar ── */
+.wb-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.wb-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.wb-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--wb-border);
+  border-radius: 2px;
+}
+.wb-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--wb-muted);
+}
+
+/* ── Animations ── */
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-6px); }
+}
+
+.animate-slide-in { animation: slide-in 0.2s ease both; }
+.animate-fade-up  { animation: fade-up 0.25s ease both; }
+.animate-float    { animation: float 3s ease-in-out infinite; }
+
+/* ── Dot grid background helper ── */
+.dot-grid {
+  background-image: radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px);
+  background-size: 26px 26px;
 }
